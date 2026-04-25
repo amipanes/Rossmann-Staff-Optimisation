@@ -3,23 +3,21 @@ import numpy as np
 import pulp
 import time
 import random
-import matplotlib.pyplot as plt
 
 # =================================================================
-# 1. CONSTANTS & WEIGHTS (Objective Function)
+# 2. CONSTANTS & WEIGHTS (The Objective Function)
 # =================================================================
-W_UNDER = 100.0   
-W_OVER = 1.0      
-W_MOBILITY = 0.1  
-W_LEGAL = 1000.0  
+W_UNDER = 100.0   # High penalty for understaffing
+W_OVER = 1.0      # Low penalty for overstaffing (wage waste)
+W_MOBILITY = 0.1  # The "Transfer" cost
+W_LEGAL = 1000.0  # Penalty for breaking 6-day rule or Sunday work
 
 # =================================================================
-# 2. DATA PREPARATION (Adjusted Path)
+# 1. DATA PREPARATION (Demand & Sunday Injection)
 # =================================================================
 def get_final_demand():
     try:
-        # PATH ADJUSTED FOR GOOGLE COLAB
-        df = pd.read_csv('/content/train.csv', low_memory=False)
+        df = pd.read_csv('train.csv', low_memory=False)
         df['Date'] = pd.to_datetime(df['Date'])
         mask = (df['Store'].isin(range(1, 11))) & (df['Date'] >= '2013-01-07') & (df['Date'] <= '2013-01-13')
         week_df = df.loc[mask].copy()
@@ -32,24 +30,22 @@ def get_final_demand():
         
         week_df['StaffNeeded'] = week_df.apply(calculate_need, axis=1)
         return week_df.sort_values(['Store', 'DayIdx']).pivot(index='Store', columns='DayIdx', values='StaffNeeded').values
-    except Exception as e:
-        print(f"Error loading CSV: {e}. Falling back to synthetic.")
-        return np.random.randint(2, 6, (10, 7))
+    except:
+        return np.random.randint(2, 5, (10, 7))
 
 demand_matrix = get_final_demand()
-target_total_shifts = int(np.sum(demand_matrix))
 
 # =================================================================
-# 3. MIP SOLVER (Tidy Baseline)
+# 3. MIP SOLVER (USING YOUR WEIGHTS)
 # =================================================================
-print("Solving MIP Model...")
-t0_mip = time.time()
+print("Solving MIP with Specified Penalties...")
 prob = pulp.LpProblem("Appendix_MIP", pulp.LpMinimize)
 x = pulp.LpVariable.dicts("w", (range(100), range(7), range(10)), cat=pulp.LpBinary)
 under = pulp.LpVariable.dicts("u", (range(10), range(7)), lowBound=0)
 over = pulp.LpVariable.dicts("o", (range(10), range(7)), lowBound=0)
 v = pulp.LpVariable.dicts("v", range(100), cat=pulp.LpBinary)
 
+# Objective: W_UNDER, W_OVER, W_MOBILITY, W_LEGAL
 prob += (
     pulp.lpSum(under[s][d] * W_UNDER for s in range(10) for d in range(7)) +
     pulp.lpSum(over[s][d] * W_OVER for s in range(10) for d in range(7)) +
@@ -59,24 +55,25 @@ prob += (
 
 for s in range(10):
     for d in range(7):
+        # Staffing Balance: Assigned - Over + Under = Demand
         prob += pulp.lpSum(x[e][d][s] for e in range(100)) - over[s][d] + under[s][d] == demand_matrix[s, d]
+
 for e in range(100):
+    # 6-Day Rule Penalty trigger
     prob += pulp.lpSum(x[e][d][s] for d in range(7) for s in range(10)) - 6 <= v[e] * 7
-    for d in range(7): prob += pulp.lpSum(x[e][d][s] for s in range(10)) <= 1
+    for d in range(7):
+        prob += pulp.lpSum(x[e][d][s] for s in range(10)) <= 1
 
 prob.solve(pulp.PULP_CBC_CMD(msg=0))
-mip_time = time.time() - t0_mip
-mip_score = pulp.value(prob.objective)
 
 # =================================================================
-# 4. GA 30-TRIAL STRESS TEST
+# 4. GA IMPLEMENTATION (USING YOUR WEIGHTS)
 # =================================================================
 class StandardGA:
     def __init__(self, demand, pop_size=60):
         self.demand = demand
         self.pop_size = pop_size
         self.population = np.random.randint(-1, 10, (pop_size, 100, 7))
-        self.history = []
 
     def fitness(self, chromo):
         score = 0
@@ -84,65 +81,55 @@ class StandardGA:
             for s in range(10):
                 assigned = np.sum(chromo[:, d] == s)
                 diff = assigned - self.demand[s, d]
-                if diff < 0: score += abs(diff) * W_UNDER
-                elif diff > 0: score += diff * W_OVER
+                if diff < 0:
+                    score += abs(diff) * W_UNDER
+                elif diff > 0:
+                    score += diff * W_OVER
+        
         for e in range(100):
             work_days = chromo[e] >= 0
+            # Mobility Penalty
             score += np.sum(work_days & (chromo[e] != (e // 10))) * W_MOBILITY
-            if np.sum(work_days) > 6: score += W_LEGAL
+            # Legal Penalty
+            if np.sum(work_days) > 6:
+                score += W_LEGAL
         return score
 
     def run(self, gens=150):
         for _ in range(gens):
             scores = [self.fitness(ind) for ind in self.population]
             self.population = self.population[np.argsort(scores)]
-            self.history.append(min(scores))
             next_gen = list(self.population[:5])
             while len(next_gen) < self.pop_size:
                 p1, p2 = self.population[random.randint(0, 10)], self.population[random.randint(0, 10)]
                 child = np.where(np.random.rand(100, 7) > 0.5, p1, p2)
-                if random.random() < 0.1: child[random.randint(0, 99), random.randint(0, 6)] = random.randint(-1, 9)
+                if random.random() < 0.1: 
+                    child[random.randint(0, 99), random.randint(0, 6)] = random.randint(-1, 9)
                 next_gen.append(child)
             self.population = np.array(next_gen)
-        return self.population[0], self.history
+        return self.fitness(self.population[0]), self.population[0]
 
-trial_stats = []
-best_ga_chromo = None
-best_ga_score = float('inf')
-last_history = []
-
-print("Running 30 GA Trials...")
-for i in range(30):
-    t_start = time.time()
-    ga = StandardGA(demand_matrix)
-    score, history = ga.run(150)
-    t_total = time.time() - t_start
-    
-    shifts = np.sum(ga.population[0] != -1)
-    violations = sum(1 for e in range(100) if np.sum(ga.population[0][e] >= 0) > 6)
-    
-    trial_stats.append({'Trial': i+1, 'Score': score, 'Time': t_total, 'Shifts': shifts, 'Violations': violations})
-    if score < best_ga_score:
-        best_ga_score = score
-        best_ga_chromo = ga.population[0]
-        last_history = history
+print("Running GA with Specified Penalties...")
+ga_score, ga_best = StandardGA(demand_matrix).run()
 
 # =================================================================
-# 5. CSV EXPORT & VISUALS
+# 5. REPORTING
 # =================================================================
-# CSV Outputs
-pd.DataFrame(trial_stats).to_csv('appendix_ga_trials.csv', index=False)
+mip_shifts = sum(pulp.value(x[e][d][s]) for e in range(100) for d in range(7) for s in range(10))
+ga_shifts = np.sum(ga_best != -1)
 
-roster = []
-for e in range(100):
-    row = {'ID': e, 'Home': (e // 10) + 1}
-    for d_idx, d_name in enumerate(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']):
-        m_s = [s + 1 for s in range(10) if pulp.value(x[e][d_idx][s]) == 1]
-        row[f'MIP_{d_name}'] = m_s[0] if m_s else "OFF"
-        g_s = best_ga_chromo[e, d_idx]
-        row[f'GA_{d_name}'] = g_s + 1 if g_s != -1 else "OFF"
-    roster.append(row)
-pd.DataFrame(roster).to_csv('appendix_staff_comparison.csv', index=False)
+print("\n" + "="*65)
+print(f"{'OBJECTIVE FUNCTION PERFORMANCE REPORT':^65}")
+print("="*65)
+print(f"{'METRIC':<30} | {'MIP (Optimal)':<15} | {'GA (Result)':<15}")
+print("-" * 65)
+print(f"{'Total Objective Score':<30} | {pulp.value(prob.objective):<15.2f} | {ga_score:<15.2f}")
+print(f"{'Total Shifts Assigned':<30} | {int(mip_shifts):<15} | {int(ga_shifts):<15}")
+print(f"{'Transfers (Mobility)':<30} | {int(sum(pulp.value(x[e][d][s]) for e in range(100) for d in range(7) for s in range(10) if s != (e // 10))):<15} | {'Manual Check':<15}")
+print("="*65)
+
+
+
 
 # Visualizations
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))

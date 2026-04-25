@@ -198,3 +198,28 @@ plt.annotate('Optimality Gap', xy=(100, 10), xytext=(110, 100),
              arrowprops=dict(facecolor='black', shrink=0.05))
 
 plt.show()
+
+
+import matplotlib.pyplot as plt
+
+# Metrics from user data
+metrics = ['MIP assigned', 'Target', 'GA assigned']
+shifts = [423, 423, 556.1]
+
+# Visualization setup
+plt.figure(figsize=(10, 6))
+plt.bar(metrics, shifts, color=['#004c6d', '#6f6f6f', '#de7e5d'])
+
+# Labels and titles
+plt.ylabel('Total Shifts Assigned')
+
+
+# Highlight the overstaffing
+gap = 556.1 - 423
+plt.annotate(f'Overstaffing: +{gap:.1f} shifts', 
+             xy=(1, 556.1), xytext=(1, 600),
+             arrowprops=dict(facecolor='black', shrink=0.05),
+             horizontalalignment='center')
+
+plt.grid(axis='y', linestyle='--', alpha=0.4)
+plt.show()

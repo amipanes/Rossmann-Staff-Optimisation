@@ -36,7 +36,7 @@ def get_final_demand():
 demand_matrix = get_final_demand()
 
 # =================================================================
-# 3. MIP SOLVER (USING YOUR WEIGHTS)
+# 3. MIP SOLVER (USING WEIGHTS)
 # =================================================================
 print("Solving MIP with Specified Penalties...")
 prob = pulp.LpProblem("Appendix_MIP", pulp.LpMinimize)
@@ -67,7 +67,7 @@ for e in range(100):
 prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
 # =================================================================
-# 4. GA IMPLEMENTATION (USING YOUR WEIGHTS)
+# 4. GA IMPLEMENTATION (USING WEIGHTS)
 # =================================================================
 class StandardGA:
     def __init__(self, demand, pop_size=60):

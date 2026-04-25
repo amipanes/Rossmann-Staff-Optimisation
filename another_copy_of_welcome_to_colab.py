@@ -223,3 +223,46 @@ plt.annotate(f'Overstaffing: +{gap:.1f} shifts',
 
 plt.grid(axis='y', linestyle='--', alpha=0.4)
 plt.show()
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Data from your summary statistics
+labels = ['Understaffing', 'Overstaffing', 'Legal (6-Day)', 'Mobility']
+
+# MIP Penalties (Total Score: 0.5)
+# The MIP has 0 under, 0 over, 0 legal. All 0.5 comes from 5 transfers.
+mip_penalties = [0, 0, 0, 0.5]
+
+# GA Penalties (Total Score: 5665.24)
+# Based on your data: 5.17 legal violations = 5170. 
+# 133.1 extra shifts = 133.1. 
+# Remainder is mobility/understaffing noise.
+ga_penalties = [150.0, 133.1, 5170.0, 212.14] 
+
+x = np.arange(len(labels))
+width = 0.35
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+# --- PLOT 1: PENALTY COMPARISON (LOG SCALE) ---
+ax1.bar(x - width/2, mip_penalties, width, label='MIP (Tidy)', color='#004c6d')
+ax1.bar(x + width/2, ga_penalties, width, label='GA (Scruffy)', color='#de7e5d')
+
+ax1.set_ylabel('Penalty Cost (Log Scale)')
+ax1.set_title('Penalty Decomposition: MIP vs GA')
+ax1.set_xticks(x)
+ax1.set_xticklabels(labels)
+ax1.set_yscale('log') # Vital for visualizing the scale difference
+ax1.legend()
+ax1.grid(axis='y', which='both', linestyle='--', alpha=0.5)
+
+# --- PLOT 2: GA PENALTY DISTRIBUTION (PIE CHART) ---
+# Showing what actually makes up that 5665.24 score
+ax2.pie(ga_penalties, labels=labels, autopct='%1.1f%%', 
+        colors=['#669911', '#ffcc00', '#ff9999', '#66b3ff'],
+        startangle=140, explode=(0, 0, 0.1, 0))
+ax2.set_title('Where the GA Score is Generated')
+
+plt.tight_layout()
+plt.show()
